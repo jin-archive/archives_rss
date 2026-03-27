@@ -6,7 +6,7 @@ import pytz
 import re
 from urllib.parse import urljoin
 
-# 1. 대상 URL 및 설정 정보 리스트 (두 개의 게시판을 한 번에 처리)
+# 1. 대상 URL 및 설정 정보 리스트
 targets = [
     {
         'url': 'https://www.archives.go.kr/next/newnews/wordsList1.do',
@@ -28,17 +28,15 @@ headers = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
 }
 
-# 2. 각 게시판별로 반복하며 RSS 생성
 for target in targets:
     print(f"[{target['title']}] 작업을 시작합니다...")
     
     try:
         response = requests.get(target['url'], headers=headers, timeout=15)
         response.raise_for_status()
-        response.encoding = 'utf-8' # 한글 깨짐 방지
+        response.encoding = 'utf-8'
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # RSS 피드 초기화
         fg = FeedGenerator()
         fg.id(target['url'])
         fg.title(target['title'])
@@ -47,7 +45,7 @@ for target in targets:
         fg.description(target['desc'])
         fg.language('ko')
         
-        # 게시글 목록 파싱 (표 형태)
+        # 게시글 목록 파싱
         rows = soup.select('table tbody tr')
         if not rows:
             rows = soup.select('.board_list tbody tr, .list_wrap > div, ul.list > li')
@@ -59,17 +57,27 @@ for target in targets:
             if not a_tag:
                 continue
                 
-            # 제목 정제 (이미지에 있는 'N' 아이콘 텍스트 등 제거)
             raw_title = a_tag.get_text(separator=' ', strip=True)
             title = re.sub(r'^(공지|새글|N)\s*', '', raw_title, flags=re.IGNORECASE).strip()
             
-            if len(title) < 2:
+            # 1차 필터: 제목이 너무 짧거나, 불필요한 검색용 메뉴일 경우 패스
+            junk_words = ['기관검색', '생산기관검색', '검색어', '본문으로']
+            if len(title) < 5 or any(junk in title for junk in junk_words):
+                continue
+                
+            # 날짜 추출 (형식: 2026-03-18)
+            date_str = ""
+            date_match = re.search(r'(20\d{2}[-./]\d{2}[-./]\d{2})', row.get_text(separator=' '))
+            if date_match:
+                date_str = date_match.group(1).replace('.', '-').replace('/', '-')
+                
+            # 2차 강력 필터: 표의 한 줄(Row) 안에 등록일(날짜)이 없으면 진짜 게시글이 아님!
+            if not date_str:
                 continue
                 
             href = a_tag.get('href', '')
             onclick = a_tag.get('onclick', '')
             
-            # 링크 조립 (자바스크립트 처리 포함)
             if href.startswith('/'):
                 link = urljoin(base_url, href)
             elif 'javascript' in href or href == '#' or not href:
@@ -81,27 +89,20 @@ for target in targets:
             else:
                 link = urljoin(target['url'], href)
                 
-            # 날짜 추출 (형식: 2026-03-18)
-            date_str = ""
-            date_match = re.search(r'(20\d{2}[-./]\d{2}[-./]\d{2})', row.get_text(separator=' '))
-            if date_match:
-                date_str = date_match.group(1).replace('.', '-').replace('/', '-')
-                
-            # RSS 항목 추가 (읽어온 순서대로 차곡차곡)
             fe = fg.add_entry(order='append')
             fe.id(link)
             fe.title(title)
             fe.link(href=link)
             
-            if date_str:
-                try:
-                    dt = datetime.strptime(date_str, '%Y-%m-%d')
-                    kst = pytz.timezone('Asia/Seoul')
-                    dt = kst.localize(dt)
-                    fe.pubDate(dt)
-                except ValueError:
-                    pass
-                    
+            # 날짜 변환 및 적용
+            try:
+                dt = datetime.strptime(date_str, '%Y-%m-%d')
+                kst = pytz.timezone('Asia/Seoul')
+                dt = kst.localize(dt)
+                fe.pubDate(dt)
+            except ValueError:
+                pass
+                
             items_found += 1
             
         fg.rss_file(target['filename'])
