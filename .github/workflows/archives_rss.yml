@@ -1,0 +1,40 @@
+name: Generate National Archives RSS Feeds
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # 매일 한국 시간 오전 11시에 실행 (UTC 02:00)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4 feedgen pytz
+
+    - name: Run Archives RSS Generator Script
+      run: python generate_archives_rss.py
+
+    - name: Commit and push changes
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+        
+        # 생성된 2개의 XML 파일을 모두 추가
+        git add archives_notice_rss.xml archives_recruit_rss.xml
+        
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update National Archives RSS feeds" && git push)
